@@ -1,11 +1,8 @@
-"""
-Central Server that receive, route and record packet among clients
-"""
 import asyncio
 import json
 import logging
-import signal
 
+from websockets.exceptions import ConnectionClosed
 from websockets.legacy.protocol import broadcast
 from websockets.legacy.server import serve, WebSocketServerProtocol
 
@@ -20,7 +17,7 @@ class Server:
             self,
             host="",
             port=8080,
-            auth_func=lambda packet: [True, ""],
+            auth_func=lambda packet: (True, ""),
             auth_timeout=1,
             recorder=Recorder(),
     ) -> None:
@@ -28,47 +25,8 @@ class Server:
         self.port = port
         self.auth_timeout = auth_timeout
         self.auth_func = auth_func
-        self.stop = None
         self.client_dict = {}
         self.recorder = recorder
-
-    async def authenticate(self, websocket: WebSocketServerProtocol):
-        """
-        Wait for the first message after connection, then do a sanity check.
-
-        Pass the checked data to auth func for further authentication.
-
-        The auth func has to return [True, None] if passed else [False, error_message].
-        """
-        try:
-            message = await asyncio.wait_for(websocket.recv(), timeout=self.auth_timeout)
-            packet = json.loads(message[:1024])
-            uid = packet["uid"]
-            assert isinstance(uid, str)
-            assert uid.replace("_", "").isalnum()
-            assert uid not in self.client_dict
-            auth_result = self.auth_func(packet)
-        except (KeyError, AssertionError):
-            return False, get_error_line()
-        except Exception as e:
-            return False, str(e)
-        if auth_result[0]:
-            auth_result[1] = uid
-            self.client_dict[uid] = packet
-            self.client_dict[uid]["connection"] = websocket
-            await self.record(self.decorate(uid, "login"))
-            logger.info(f"client:{uid} logged in")
-        else:
-            logger.info(f"client from {websocket.remote_address()} auth failed: {auth_result[1]}")
-        return auth_result
-
-    async def logout(self, uid: str):
-        """
-        When the client lost connection, clean up resource.
-        """
-        del self.client_dict[uid]
-        await self.record(self.decorate(uid, "logout"))
-        logger.info(f"client:{uid} logged out")
 
     @staticmethod
     def decorate(uid: str, action_type: str, packet=None):
@@ -91,11 +49,32 @@ class Server:
         packet = packet.copy()
         await self.recorder(packet)
 
+    async def authenticate(self, websocket: WebSocketServerProtocol):
+        try:
+            message = await asyncio.wait_for(websocket.recv(), timeout=self.auth_timeout)
+            packet = json.loads(message[:1024])
+            uid = packet["uid"]
+            assert isinstance(uid, str)
+            assert uid.replace("_", "").isalnum()
+            assert uid not in self.client_dict
+            auth_result = self.auth_func(packet)
+            await websocket.send(json.dumps(auth_result))
+        except (KeyError, AssertionError):
+            return False, get_error_line()
+        except Exception as e:
+            return False, str(e)
+        if auth_result[0]:
+            self.client_dict[uid] = packet
+            self.client_dict[uid]["connection"] = websocket
+            await self.record(self.decorate(uid, "login"))
+            logger.info(f"client:{uid} logged in")
+            return True, uid
+        else:
+            logger.info(f"client from {websocket.remote_address()} auth failed: {auth_result[1]}")
+            return auth_result
+
     @staticmethod
     def load(message) -> dict:
-        """
-        Function that deserialize data.
-        """
         packet: dict = json.loads(message)
         assert isinstance(packet, dict)
         assert len(packet) == 2
@@ -109,7 +88,7 @@ class Server:
         """
         Route received packet to other client.
 
-        Note that there might be no reachable client.
+        Note that there might be no reachable client in destination.
         """
         temp = packet.copy()
         connection_set = set()
@@ -130,34 +109,68 @@ class Server:
         """
         pass
 
+    async def logout(self, uid: str):
+        """
+        When the client lost connection, clean up resource.
+        """
+        del self.client_dict[uid]
+        await self.record(self.decorate(uid, "logout"))
+        logger.info(f"client:{uid} logged out")
+
     async def handler(self, websocket: WebSocketServerProtocol):
-        """
-        Client login, then receive, route, record and react.
-        """
         login_result = await self.authenticate(websocket)
         if login_result[0]:
-            uid = login_result[1]
+            uid = str(login_result[1])
         else:
             return
-        async for message in websocket:
+        while True:
             try:
+                message = await websocket.recv()
                 packet = self.load(message)
+            except ConnectionClosed as e:
+                logger.warning(f"connection closed: {str(e)}")
+                break
             except (KeyError, AssertionError):
                 logger.warning(f"loading failed: {get_error_line()}")
                 continue
-            except Exception as e:
+            except json.JSONDecodeError as e:
                 logger.warning(f"loading failed: {str(e)}")
                 continue
+            except Exception as e:
+                logger.warning(f"loading failed: {str(e)}")
+                break
             packet = self.decorate(uid, "message", packet)
             self.route(packet)
             await self.record(packet)
             await self.react(packet)
         await self.logout(uid)
 
+    async def set_up(self):
+        """
+        This method will be called after server start serving.
+        """
+        pass
+
+    def clean_up(self):
+        """
+        This method will be called after connection closed.
+        """
+        pass
+
+    async def wait_clean_up(self):
+        """
+        This method will be called after clean_up called.
+        """
+        pass
+
     async def __call__(self):
-        loop = asyncio.get_running_loop()
-        self.stop = loop.create_future()
-        loop.add_signal_handler(signal.SIGINT, self.stop.set_result, None)
-        loop.add_signal_handler(signal.SIGTERM, self.stop.set_result, None)
-        async with serve(self.handler, self.host, self.port):
-            await self.stop
+        server = await serve(self.handler, self.host, self.port)
+        await self.set_up()
+        try:
+            await server.serve_forever()
+        except asyncio.CancelledError:
+            logger.info("Server stopping")
+        self.clean_up()
+        await self.wait_clean_up()
+        server.close()
+        await server.wait_closed()

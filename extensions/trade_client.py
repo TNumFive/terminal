@@ -5,8 +5,8 @@ import time
 from typing import Optional, Dict
 
 from websockets.exceptions import ConnectionClosedError
-from websockets.legacy.server import WebSocketServerProtocol
 from websockets.legacy import client as ws_client
+from websockets.legacy.server import WebSocketServerProtocol
 
 from core import Client
 from core.utils import get_error_line
@@ -15,13 +15,6 @@ logger = logging.getLogger(__name__)
 
 
 class TradeClient(Client):
-
-    async def initialize(self):
-        pass
-
-    async def login(self):
-        await super().login()
-        await self.initialize()
 
     def load_content(self, content: str):
         try:
@@ -51,24 +44,16 @@ class TradeClient(Client):
 
 class ExchangeClient(TradeClient):
 
-    def __init__(self, uid: str, uri: str = "ws://localhost:8080", auth_func=lambda uid: {"uid": uid}, debug=False):
+    def __init__(self, uid: str, uri: str = "ws://localhost:8080", auth_func=lambda uid: {"uid": uid}):
         super().__init__(uid, uri, auth_func)
-        self.debug = debug
         self.is_initialized = False
 
     async def check_alive(self, uid: str, request_id: int):
-        """
-        There are two kinds of request,
-
-        One like this check_alive, which will return {"method":result_obj}. The result_obj must be a dict with key "id".
-
-        And the other like sub/unsub, which will return public data in binance ws data format.
-        """
-        response = {"check_alive": {"id": request_id}}
+        response = {"id": request_id}
         await self.send([uid], json.dumps(response))
 
     async def check_initialized(self, uid: str, request_id: int):
-        response = {"check_initialized": {"id": request_id, "status": self.is_initialized}}
+        response = {"id": request_id, "result": self.is_initialized}
         await self.send([uid], json.dumps(response))
 
     async def react(self, packet: dict):
@@ -89,18 +74,38 @@ class ExchangeClient(TradeClient):
 
 
 class BinanceExchangeClient(ExchangeClient):
+
     def __init__(self, uid: str, uri: str = "ws://localhost:8080", auth_func=lambda uid: {"uid": uid},
                  binance_ws_url="wss://stream.binance.com", init_stream="btcusdt@kline_1m"):
         super().__init__(uid, uri, auth_func)
+        self.packet_buffer = []
+        self.binance_task: Optional[asyncio.Task] = None
         self.binance_ws_url = binance_ws_url
         self.init_stream = init_stream
         self.binance_websocket: Optional[WebSocketServerProtocol] = None
-        self.stream_dict: Dict[str, list] = {init_stream: []}
-        self.background_task = set()
+        self.stream_dict: Dict[str, list] = {}
+
+    async def send(self, dest: list[str], content: str):
+        """
+        Buffer data first in case of lost connection.
+
+        The exception to inner ws shall not affect the outside ws, and wait until reconnect then re-send.
+        """
+        self.packet_buffer.append((dest, content))
+        while len(self.packet_buffer):
+            head = self.packet_buffer[0]
+            try:
+                await super().send(head[0], head[1])
+                self.packet_buffer.pop(0)
+            except ConnectionClosedError:
+                # Eat the exception as it will be re-raised when try recv next message.
+                break
 
     async def resubscribe(self):
         stream_list = list(self.stream_dict.keys())
         stream_list.remove(self.init_stream)
+        if not len(stream_list):
+            return
         request = {
             "method": "SUBSCRIBE",
             "params": stream_list,
@@ -113,7 +118,7 @@ class BinanceExchangeClient(ExchangeClient):
         async for message in self.binance_websocket:
             try:
                 data: dict = json.loads(message)
-                assert isinstance(data, dict)
+                assert isinstance(data, dict), "data type not dict"
             except Exception as e:
                 logger.warning(f"client:{self.uid} load binance message failed: {str(e)}")
                 continue
@@ -127,24 +132,23 @@ class BinanceExchangeClient(ExchangeClient):
 
     async def connect_binance(self):
         ws_url = self.binance_ws_url + "/stream?streams=" + self.init_stream
+        self.stream_dict[self.init_stream] = []
         async for websocket in ws_client.connect(ws_url):
             try:
                 self.binance_websocket = websocket
                 self.is_initialized = True
                 await self.handler_binance()
-            except ConnectionClosedError as e:
-                logger.warning(f"client:{self.uid} connection error: {str(e)}")
+            except asyncio.CancelledError:
+                logger.warning(f"client:{self.uid} binance websocket exit")
+                return
+            except Exception as e:
+                logger.warning(f"client:{self.uid} binance websocket closed: {str(e)}")
             finally:
-                self.websocket = None
-                if self.debug:
-                    # prevent error connecting
-                    return
+                self.is_initialized = False
 
-    async def initialize(self):
-        if not self.is_initialized:
-            task = asyncio.create_task(self.connect_binance())
-            self.background_task.add(task)
-            task.add_done_callback(self.background_task.discard)
+    async def set_up(self):
+        if not self.binance_task or self.binance_task.done():
+            self.binance_task = asyncio.create_task(self.connect_binance())
 
     async def subscribe(self, uid: str, stream: str):
         if stream not in self.stream_dict:
@@ -173,6 +177,11 @@ class BinanceExchangeClient(ExchangeClient):
             }
             await self.binance_websocket.send(json.dumps(request))
             self.stream_dict.pop(stream)
+
+    async def __call__(self):
+        await super().__call__()
+        if self.binance_task and not self.binance_task.done():
+            await self.binance_task
 
 
 class StrategyClient(TradeClient):
