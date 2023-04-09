@@ -89,7 +89,6 @@ class BinanceExchangeClient(ExchangeClient):
         self.binance_task: Optional[asyncio.Task] = None
         self.binance_helper = binance_helper
         self.stream_dict: Dict[str, list] = self.binance_helper.stream_dict
-        self.background_task = set()
         self.binance_helper.portal = lambda data: self.helper_portal(data)
 
     @property

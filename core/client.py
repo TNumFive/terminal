@@ -23,6 +23,7 @@ class Client:
         self.uri = uri
         self.auth_func = auth_func
         self.websocket: Optional[WebSocketServerProtocol] = None
+        self.background_task = set()
 
     async def login(self):
         auth_obj = self.auth_func(self.uid)

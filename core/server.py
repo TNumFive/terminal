@@ -27,6 +27,7 @@ class Server:
         self.auth_func = auth_func
         self.client_dict = {}
         self.recorder = recorder
+        self.background_task = set()
 
     @staticmethod
     def decorate(uid: str, action_type: str, packet=None):

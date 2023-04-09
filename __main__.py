@@ -45,7 +45,6 @@ class Mux(Server):
             recorder=FileRecorder(),
     ) -> None:
         super().__init__(host, port, auth_func, auth_timeout, recorder)
-        self.background_task = set()
 
     async def set_up(self):
         await super().set_up()
