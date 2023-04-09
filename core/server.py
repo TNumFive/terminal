@@ -70,7 +70,8 @@ class Server:
             logger.info(f"client:{uid} logged in")
             return True, uid
         else:
-            logger.info(f"client from {websocket.remote_address()} auth failed: {auth_result[1]}")
+            address = websocket.remote_address()
+            logger.info(f"client from {address} auth failed: {auth_result[1]}")
             return auth_result
 
     @staticmethod
@@ -128,16 +129,16 @@ class Server:
                 message = await websocket.recv()
                 packet = self.load(message)
             except ConnectionClosed as e:
-                logger.warning(f"connection closed: {str(e)}")
+                logger.warning(f"client:{uid} connection closed: {str(e)}")
                 break
             except (KeyError, AssertionError):
-                logger.warning(f"loading failed: {get_error_line()}")
+                logger.warning(f"client:{uid} loading failed: {get_error_line()}")
                 continue
             except json.JSONDecodeError as e:
-                logger.warning(f"loading failed: {str(e)}")
+                logger.warning(f"client:{uid} loading failed: {str(e)}")
                 continue
             except Exception as e:
-                logger.warning(f"loading failed: {str(e)}")
+                logger.warning(f"client:{uid} loading failed: {str(e)}")
                 break
             packet = self.decorate(uid, "message", packet)
             self.route(packet)

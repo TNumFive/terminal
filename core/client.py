@@ -107,7 +107,7 @@ class Client:
                 continue
             except (asyncio.CancelledError, ConnectionClosedOK):
                 # When there is no need to re-connect, just exit.
-                logger.info(f"client:{self.uid} logged out")
+                logger.info(f"client:{self.uid} exit")
                 return
             finally:
                 self.clean_up()

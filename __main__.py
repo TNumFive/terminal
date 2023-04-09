@@ -4,7 +4,7 @@ import signal
 
 from core import FileRecorder
 from core import Server
-from core import Client, EchoClient
+from extensions import BinanceExchangeClient, StrategyClient
 
 logger = logging.getLogger("core")
 logger.setLevel(logging.DEBUG)
@@ -12,7 +12,26 @@ formatter = logging.Formatter("%(asctime)s |+| %(name)s |+| %(levelname)s |+| %(
 handler = logging.StreamHandler()
 handler.setFormatter(formatter)
 logger.addHandler(handler)
-logger.debug("set core.terminal logging level debug")
+logger = logging.getLogger("extensions")
+logger.setLevel(logging.DEBUG)
+formatter = logging.Formatter("%(asctime)s |+| %(name)s |+| %(levelname)s |+| %(message)s")
+handler = logging.StreamHandler()
+handler.setFormatter(formatter)
+logger.addHandler(handler)
+
+
+class TestStrategy(StrategyClient):
+
+    async def set_up(self):
+        await super().set_up()
+        await asyncio.sleep(1)
+        await self.check_alive("binance")
+        await self.check_initialized("binance")
+        await self.subscribe("binance", "btcusdt@bookTicker")
+
+    async def react(self, packet: dict):
+        await super().react(packet)
+        print(packet)
 
 
 class Mux(Server):
@@ -30,8 +49,9 @@ class Mux(Server):
 
     async def set_up(self):
         await super().set_up()
-        self.background_task.add(asyncio.create_task(Client("rabit_hole")()))
-        self.background_task.add(asyncio.create_task(EchoClient("echo_client")()))
+        create_task = asyncio.create_task
+        self.background_task.add(create_task(BinanceExchangeClient("binance")()))
+        self.background_task.add(create_task(TestStrategy("TestStrategy")()))
 
 
 async def main():
