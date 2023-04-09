@@ -209,3 +209,4 @@ class StrategyClient(TradeClient):
             # requested response has come back.
             request_id: int = data["id"]
             self.request_dict[request_id].set_result(data["result"])
+        return data

@@ -1,7 +1,10 @@
 import asyncio
 import logging
 import signal
+import time
+from typing import Dict, List
 
+import pandas as pd
 from core import FileRecorder
 from core import Server
 from extensions import BinanceExchangeClient, StrategyClient
@@ -22,16 +25,58 @@ logger.addHandler(handler)
 
 class TestStrategy(StrategyClient):
 
+    def __init__(self, uid: str, uri: str = "ws://localhost:8080", auth_func=lambda uid: {"uid": uid}):
+        super().__init__(uid, uri, auth_func)
+        self.n1 = 10
+        self.n2 = 20
+        self.book_ticker_list: List[Dict[str:float]] = []
+        self.timer = time.time()
+
     async def set_up(self):
         await super().set_up()
         await asyncio.sleep(1)
-        await self.check_alive("binance")
-        await self.check_initialized("binance")
-        await self.subscribe("binance", "btcusdt@bookTicker")
+        await self.subscribe("binance", "linkusdt@bookTicker")
+
+    def trade_action(self):
+        if len(self.book_ticker_list) < 2:
+            return
+        btd = pd.DataFrame.from_records(self.book_ticker_list)
+        btd.index = pd.to_datetime(btd["timestamp"], utc=True, unit="s")
+        btd["mid"] = btd["ask"] + btd["ask"]
+        btd["mid"] /= 2
+        btd["sma1"] = btd["mid"].rolling(f"{self.n1}s").mean()
+        btd["sma2"] = btd["mid"].rolling(f"{self.n2}s").mean()
+        last = btd.iloc[-2]["sma1"] > btd.iloc[-2]["sma2"]
+        now = btd.iloc[-1]["sma1"] > btd.iloc[-1]["sma2"]
+        if not last and now:
+            print(f"{btd.index[-1]} buy")
+        elif last and not now:
+            print(f"{btd.index[-1]} sell")
+        else:
+            if time.time() - 1 > self.timer:
+                self.timer = time.time()
+                print(f"{btd.index[-1]} wait")
+
+    def on_book_ticker(self, data: dict):
+        self.book_ticker_list.append({
+            "timestamp": time.time(),
+            "bid": float(data["b"]),
+            "ask": float(data["b"]),
+        })
+        while True:
+            timespan = self.book_ticker_list[-1]["timestamp"]
+            timespan -= self.book_ticker_list[0]["timestamp"]
+            if timespan > max(self.n1, self.n2) + 1:
+                self.book_ticker_list.pop(0)
+            else:
+                break
+        if timespan > max(self.n1, self.n2):
+            self.trade_action()
 
     async def react(self, packet: dict):
-        await super().react(packet)
-        print(packet)
+        data = await super().react(packet)
+        if "stream" in data:
+            self.on_book_ticker(data["data"])
 
 
 class Mux(Server):
