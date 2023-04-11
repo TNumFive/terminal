@@ -2,13 +2,10 @@ import asyncio
 import json
 import logging
 import time
-from typing import Dict, Optional
+from typing import Dict
 
-from websockets.exceptions import ConnectionClosed
-
-from core import Client
-from core.utils import get_error_line
-from .binance_helper import BinanceRawHelper as BinanceHelper
+from terminal.core import Client
+from terminal.core.utils import get_error_line
 
 logger = logging.getLogger(__name__)
 
@@ -73,81 +70,12 @@ class ExchangeClient(TradeClient):
             await self.check_alive(packet["source"], data["id"])
         elif method == "check_initialized":
             await self.check_initialized(packet["source"], data["id"])
-        if self.is_initialized:
-            if method == "subscribe":
-                await self.subscribe(packet["source"], data["params"])
-            elif method == "unsubscribe":
-                await self.unsubscribe(packet["source"], data["params"])
-
-
-class BinanceExchangeClient(ExchangeClient):
-
-    def __init__(self, uid: str, uri: str = "ws://localhost:8080", auth_func=lambda uid: {"uid": uid},
-                 binance_helper=BinanceHelper()):
-        super().__init__(uid, uri, auth_func)
-        self.packet_buffer = []
-        self.binance_task: Optional[asyncio.Task] = None
-        self.binance_helper = binance_helper
-        self.stream_dict: Dict[str, list] = self.binance_helper.stream_dict
-        self.binance_helper.portal = lambda data: self.helper_portal(data)
-
-    @property
-    def is_initialized(self):
-        return self.binance_helper.is_initialized
-
-    @is_initialized.setter
-    def is_initialized(self, _):
-        pass
-
-    async def send(self, dest: list[str], content: str):
-        """
-        Buffer data first in case of lost connection.
-
-        The exception to inner ws shall not affect the outside ws, and wait until reconnect then re-send.
-        """
-        try:
-            await super().send(dest, content)
-        except ConnectionClosed:
-            # Eat the exception and buffer the data.
-            self.packet_buffer.append((dest, content))
-
-    async def handle_binance(self, data: dict):
-        stream = data.get("stream", None)
-        if stream and isinstance(stream, str):
-            dest = self.stream_dict[stream]
-            if len(dest):
-                await self.send(dest, json.dumps(data))
-        else:
-            logger.warning(f"client:{self.uid} unknown data: {data}")
-
-    def helper_portal(self, data):
-        task = asyncio.create_task(self.handle_binance(data))
-        self.background_task.add(task)
-        task.add_done_callback(self.background_task.discard)
-
-    async def set_up(self):
-        await super().set_up()
-        if not self.binance_task or self.binance_task.done():
-            self.binance_task = asyncio.create_task(self.binance_helper())
-        if len(self.packet_buffer):
-            packet_buffer, self.packet_buffer = self.packet_buffer, []
-            for packet in packet_buffer:
-                await self.send(packet[0], packet[1])
-
-    async def subscribe(self, uid: str, stream: str):
-        await self.binance_helper.subscribe(uid, stream)
-
-    async def unsubscribe(self, uid: str, stream: str):
-        await self.binance_helper.unsubscribe(uid, stream)
-
-    async def __call__(self):
-        await super().__call__()
-        # Stop binance_helper when exited.
-        if self.binance_task and not self.binance_task.done():
-            await self.binance_helper.stop()
-            await self.binance_task
-        if len(self.background_task):
-            await asyncio.gather(*self.background_task)
+        if not self.is_initialized:
+            return
+        if method == "subscribe":
+            await self.subscribe(packet["source"], data["params"])
+        elif method == "unsubscribe":
+            await self.unsubscribe(packet["source"], data["params"])
 
 
 class StrategyClient(TradeClient):

@@ -1,26 +1,14 @@
 import asyncio
-import logging
 import signal
 import time
 from typing import Dict, List
 
 import pandas as pd
-from core import FileRecorder
-from core import Server
-from extensions import BinanceExchangeClient, StrategyClient
 
-logger = logging.getLogger("core")
-logger.setLevel(logging.DEBUG)
-formatter = logging.Formatter("%(asctime)s |+| %(name)s |+| %(levelname)s |+| %(message)s")
-handler = logging.StreamHandler()
-handler.setFormatter(formatter)
-logger.addHandler(handler)
-logger = logging.getLogger("extensions")
-logger.setLevel(logging.DEBUG)
-formatter = logging.Formatter("%(asctime)s |+| %(name)s |+| %(levelname)s |+| %(message)s")
-handler = logging.StreamHandler()
-handler.setFormatter(formatter)
-logger.addHandler(handler)
+from terminal.core import set_up_logger
+from terminal.extensions import StrategyClient
+
+logger = set_up_logger("test_strategy")
 
 
 class TestStrategy(StrategyClient):
@@ -30,12 +18,17 @@ class TestStrategy(StrategyClient):
         self.n1 = 10
         self.n2 = 20
         self.book_ticker_list: List[Dict[str:float]] = []
-        self.timer = time.time()
 
     async def set_up(self):
         await super().set_up()
         await asyncio.sleep(1)
+        await self.subscribe("binance", "enjusdt@bookTicker")
+        await self.subscribe("binance", "eosusdt@bookTicker")
         await self.subscribe("binance", "linkusdt@bookTicker")
+        await self.subscribe("binance", "maticusdt@bookTicker")
+        await self.subscribe("binance", "trxusdt@bookTicker")
+        await self.subscribe("binance", "vetusdt@bookTicker")
+        await self.subscribe("binance", "xlmusdt@bookTicker")
 
     def trade_action(self):
         if len(self.book_ticker_list) < 2:
@@ -49,13 +42,9 @@ class TestStrategy(StrategyClient):
         last = btd.iloc[-2]["sma1"] > btd.iloc[-2]["sma2"]
         now = btd.iloc[-1]["sma1"] > btd.iloc[-1]["sma2"]
         if not last and now:
-            print(f"{btd.index[-1]} buy")
+            logger.info(f"buy link usdt at {btd.index[-1]}")
         elif last and not now:
-            print(f"{btd.index[-1]} sell")
-        else:
-            if time.time() - 1 > self.timer:
-                self.timer = time.time()
-                print(f"{btd.index[-1]} wait")
+            logger.info(f"sell link usdt at {btd.index[-1]}")
 
     def on_book_ticker(self, data: dict):
         self.book_ticker_list.append({
@@ -75,36 +64,18 @@ class TestStrategy(StrategyClient):
 
     async def react(self, packet: dict):
         data = await super().react(packet)
-        if "stream" in data:
+        if "stream" in data and data["stream"] == "linkusdt@bookTicker":
             self.on_book_ticker(data["data"])
-
-
-class Mux(Server):
-
-    def __init__(
-            self,
-            host="",
-            port=8080,
-            auth_func=lambda packet: [True, ""],
-            auth_timeout=1,
-            recorder=FileRecorder(),
-    ) -> None:
-        super().__init__(host, port, auth_func, auth_timeout, recorder)
-
-    async def set_up(self):
-        await super().set_up()
-        create_task = asyncio.create_task
-        self.background_task.add(create_task(BinanceExchangeClient("binance")()))
-        self.background_task.add(create_task(TestStrategy("TestStrategy")()))
 
 
 async def main():
     loop = asyncio.get_running_loop()
-    task = asyncio.create_task(Mux()())
+    task = asyncio.create_task(TestStrategy("test_strategy")())
     loop.add_signal_handler(signal.SIGINT, task.cancel)
     loop.add_signal_handler(signal.SIGTERM, task.cancel)
     await task
 
 
 if __name__ == "__main__":
+    set_up_logger()
     asyncio.run(main(), debug=True)

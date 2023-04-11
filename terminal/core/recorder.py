@@ -1,11 +1,14 @@
 import asyncio
 import json
+import logging
 import os
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import aiofiles
+
+logger = logging.getLogger(__name__)
 
 
 class Recorder:

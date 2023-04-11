@@ -1,6 +1,7 @@
+import logging
 import os
-import traceback
 import time
+import traceback
 from datetime import datetime, timedelta
 from logging.handlers import BaseRotatingHandler
 from stat import ST_MTIME
@@ -20,14 +21,7 @@ def get_error_line():
 
 
 class TimedRotatingFileHandler(BaseRotatingHandler):
-    def __init__(
-            self,
-            filename,
-            interval=timedelta(hours=1),
-            encoding=None,
-            delay=False,
-            errors=None,
-    ) -> None:
+    def __init__(self, filename, interval=timedelta(hours=1), encoding=None, delay=False, errors=None) -> None:
         self.shouldRollover = self.should_rollover
         self.doRollover = self.do_rollover
         super().__init__(filename, "a", encoding=encoding, delay=delay, errors=errors)
@@ -61,3 +55,13 @@ class TimedRotatingFileHandler(BaseRotatingHandler):
         self.now = time.time()
         if not self.delay:
             self.stream = self._open()
+
+
+def set_up_logger(name="terminal"):
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.DEBUG)
+    formatter = logging.Formatter("%(asctime)s |+| %(name)s |+| %(levelname)s |+| %(message)s")
+    handler = logging.StreamHandler()
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    return logger
