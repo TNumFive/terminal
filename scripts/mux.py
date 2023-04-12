@@ -1,9 +1,10 @@
 import asyncio
 import signal
 
-from terminal.core import Client, EchoClient, set_up_logger
+from terminal.core import Client, EchoClient
 from terminal.core import FileRecorder
 from terminal.core import Server
+from terminal.extensions import set_up_logger
 
 
 class Mux(Server):

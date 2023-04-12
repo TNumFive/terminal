@@ -8,8 +8,7 @@ from websockets.exceptions import ConnectionClosed
 from websockets.legacy import client as ws_client
 from websockets.legacy.server import WebSocketServerProtocol
 
-from terminal.core import set_up_logger
-from terminal.extensions import ExchangeClient
+from terminal.extensions import set_up_logger, ExchangeClient
 
 logger = set_up_logger("binance")
 

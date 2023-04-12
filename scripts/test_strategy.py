@@ -5,8 +5,7 @@ from typing import Dict, List
 
 import pandas as pd
 
-from terminal.core import set_up_logger
-from terminal.extensions import StrategyClient
+from terminal.extensions import set_up_logger, StrategyClient
 
 logger = set_up_logger("test_strategy")
 
