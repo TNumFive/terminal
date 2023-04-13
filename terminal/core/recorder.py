@@ -5,14 +5,17 @@ import os
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import List
 
 import aiofiles
+
+from .utils import Packet
 
 logger = logging.getLogger(__name__)
 
 
 class Recorder:
-    async def __call__(self, _):
+    async def __call__(self, _: Packet):
         pass
 
 
@@ -27,11 +30,11 @@ class FileRecorder(Recorder):
         self.base_path = self.record_dir.joinpath(self.base_name)
         try:
             with self.base_path.open("r") as f:
-                data = json.loads(f.readline().strip())
-                self.now = data["timestamp"] / 1000
+                packet = Packet.from_str(f.readline().strip())
+                self.now = packet.route_time / 1000
         except (FileNotFoundError, json.JSONDecodeError):
             self.now = time.time()
-        self.buffer = []
+        self.buffer: List[Packet] = []
         self.background_task = set()
 
     def rotate_if_should(self):
@@ -48,13 +51,13 @@ class FileRecorder(Recorder):
     async def write_if_should(self):
         if not len(self.buffer):
             return
-        take_out, self.buffer = self.buffer, []
+        buffer, self.buffer = self.buffer, []
         self.rotate_if_should()
         async with aiofiles.open(self.base_path, "a") as f:
-            for packet in take_out:
-                await f.write(f"{json.dumps(packet)}\n")
+            for packet in buffer:
+                await f.write(f"{packet.to_str()}\n")
 
-    async def __call__(self, packet: dict):
+    async def __call__(self, packet: Packet):
         self.buffer.append(packet)
         task = asyncio.create_task(self.write_if_should())
         self.background_task.add(task)

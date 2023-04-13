@@ -7,7 +7,7 @@ from websockets.exceptions import ConnectionClosedOK, ConnectionClosedError
 from websockets.legacy import client as ws_client
 from websockets.legacy.server import WebSocketServerProtocol
 
-from .utils import get_error_line
+from .utils import Packet
 
 logger = logging.getLogger(__name__)
 
@@ -26,14 +26,15 @@ class Client:
         self.background_task = set()
 
     async def login(self):
-        auth_obj = self.auth_func(self.uid)
         logger.info(f"client:{self.uid} logging in")
-        await self.websocket.send(json.dumps(auth_obj))
-        auth_result = json.loads(await self.websocket.recv())
-        if auth_result[0]:
+        auth_obj = self.auth_func(self.uid)
+        content = json.dumps(auth_obj)
+        await self.websocket.send(Packet.to_login(self.uid, content))
+        packet = Packet.from_server_message(await self.websocket.recv())
+        if not len(packet.content):
             logger.info(f"client:{self.uid} logged in")
         else:
-            logger.info(f"client:{self.uid} log in failed:{auth_result[-1]}")
+            logger.info(f"client:{self.uid} log in failed:{packet.content}")
             # Server will close the connection when auth failed,
             # and as it's due to auth fail, there is no need to re-connect.
             raise ConnectionClosedOK
@@ -44,26 +45,11 @@ class Client:
         """
         pass
 
-    @staticmethod
-    def load(message) -> dict:
-        """
-        Helper method to make sure format checked
-        """
-        packet: dict = json.loads(message)
-        assert isinstance(packet, dict)
-        assert len(packet) == 4
-        assert isinstance(packet["timestamp"], float)
-        assert isinstance(packet["source"], str)
-        assert isinstance(packet["action"], str)
-        assert isinstance(packet["content"], str)
-        return packet
-
     async def send(self, dest: list[str], content: str):
         """
         Helper method to make sure format checked
         """
-        message = json.dumps({"destination": dest, "content": content})
-        await self.websocket.send(message)
+        await self.websocket.send(Packet.to_server(dest, content))
 
     async def react(self, packet: dict):
         """
@@ -75,10 +61,7 @@ class Client:
         while True:
             message = await self.websocket.recv()
             try:
-                packet = self.load(message)
-            except (KeyError, AssertionError):
-                logger.warning(f"client:{self.uid} loading failed: {get_error_line()}")
-                continue
+                packet = Packet.from_server_message(message)
             except Exception as e:
                 logger.warning(f"client:{self.uid} loading failed: {str(e)}")
                 continue
@@ -108,14 +91,14 @@ class Client:
                 continue
             except (asyncio.CancelledError, ConnectionClosedOK):
                 # When there is no need to re-connect, just exit.
-                logger.info(f"client:{self.uid} exit")
-                return
-            finally:
+                logger.info(f"client:{self.uid} exiting")
                 self.clean_up()
                 await self.wait_clean_up()
+                break
+        logger.info(f"client:{self.uid} exit")
 
 
 class EchoClient(Client):
 
-    async def react(self, packet: dict):
-        await self.send([packet["source"]], packet["content"])
+    async def react(self, packet: Packet):
+        await self.send([packet.source], packet.content)
