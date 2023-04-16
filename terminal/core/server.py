@@ -6,7 +6,7 @@ from websockets.legacy.protocol import broadcast
 from websockets.legacy.server import serve, WebSocketServerProtocol
 
 from .recorder import Recorder
-from .utils import Packet
+from .utils import get_timestamp, Packet
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ class Server:
 
     async def record(self, packet: Packet):
         """
-        Record data that received for later playback.
+        Record data for later playback.
         """
         await self.recorder(packet)
 
@@ -85,7 +85,10 @@ class Server:
         del self.client_dict[uid]
         del self.conn_dict[uid]
         logger.info(f"client:{uid} logged out")
-        await self.record(Packet.to_logout(uid))
+        # Construct a logout packet
+        timestamp = get_timestamp()
+        packet = Packet(timestamp, timestamp, "logout", uid, [], "")
+        await self.record(packet)
 
     async def handler(self, websocket: WebSocketServerProtocol):
         try:
@@ -104,10 +107,11 @@ class Server:
                 break
             except Exception as e:
                 # If any exception, drop the message
-                logger.warning(f"client:{uid} loading failed: {str(e)}")
+                logger.warning(f"loading packet failed from client:{uid}: {str(e)}")
                 continue
             self.route(packet)
             await self.record(packet)
+            # React after all other works done.
             await self.react(packet)
         await self.logout(uid)
 

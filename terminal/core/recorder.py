@@ -34,7 +34,7 @@ class FileRecorder(Recorder):
                 self.now = packet.route_time / 1000
         except (FileNotFoundError, json.JSONDecodeError):
             self.now = time.time()
-        self.buffer: List[Packet] = []
+        self.packet_buffer: List[Packet] = []
         self.background_task = set()
 
     def rotate_if_should(self):
@@ -49,16 +49,16 @@ class FileRecorder(Recorder):
             self.now = now
 
     async def write_if_should(self):
-        if not len(self.buffer):
+        if not len(self.packet_buffer):
             return
-        buffer, self.buffer = self.buffer, []
+        packet_buffer, self.packet_buffer = self.packet_buffer, []
         self.rotate_if_should()
         async with aiofiles.open(self.base_path, "a") as f:
-            for packet in buffer:
+            for packet in packet_buffer:
                 await f.write(f"{packet.to_str()}\n")
 
     async def __call__(self, packet: Packet):
-        self.buffer.append(packet)
+        self.packet_buffer.append(packet)
         task = asyncio.create_task(self.write_if_should())
         self.background_task.add(task)
         task.add_done_callback(self.background_task.discard)

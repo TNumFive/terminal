@@ -38,7 +38,7 @@ class Packet:
         try:
             packet = json.loads(message)
         except json.JSONDecodeError:
-            assert False, "json decode error"
+            assert False, "packet decode error"
         assert isinstance(packet, dict), "packet type error"
         assert len(packet) == field_num, "field num error"
         return packet
@@ -65,7 +65,8 @@ class Packet:
     def check_source(packet: dict):
         assert "sc" in packet, "source missing"
         assert isinstance(packet["sc"], str), "source type error"
-        assert packet["sc"].replace("_", "").isalnum(), "source format error"
+        sc = packet["sc"].replace("_", "")
+        assert sc.isalnum() or sc == "#", "source format error"
 
     @staticmethod
     def check_destination(packet: dict):
@@ -157,18 +158,11 @@ class Packet:
         return json.dumps(packet)
 
     @staticmethod
-    def to_logout(source: str):
-        """
-        Logout record is produced by server and recorded immediately, so it need to be a complete Packet.
-        """
-        return Packet(get_timestamp(), get_timestamp(), "logout", source, [], "").to_str()
-
-    @staticmethod
     def from_str(message: str):
         """
         Load from output of to_str.
         """
-        packet = Packet.check_message(message, 5)
+        packet = Packet.check_message(message, 6)
         Packet.check_sent_time(packet)
         Packet.check_route_time(packet)
         Packet.check_action(packet)

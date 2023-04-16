@@ -6,6 +6,7 @@ from typing import Dict, List
 import pandas as pd
 
 from terminal.extensions import set_up_logger, StrategyClient
+from terminal.extensions.trade import StreamContent
 
 logger = set_up_logger("test_strategy")
 
@@ -41,9 +42,9 @@ class TestStrategy(StrategyClient):
         last = btd.iloc[-2]["sma1"] > btd.iloc[-2]["sma2"]
         now = btd.iloc[-1]["sma1"] > btd.iloc[-1]["sma2"]
         if not last and now:
-            logger.info(f"buy link usdt at {btd.index[-1]}")
+            logger.info(f"buy link usdt at {btd.index[-1]} with {btd.iloc[-1]['ask']}")
         elif last and not now:
-            logger.info(f"sell link usdt at {btd.index[-1]}")
+            logger.info(f"sell link usdt at {btd.index[-1]} with {btd.iloc[-1]['bid']}")
 
     def on_book_ticker(self, data: dict):
         self.book_ticker_list.append({
@@ -61,10 +62,9 @@ class TestStrategy(StrategyClient):
         if timespan > max(self.n1, self.n2):
             self.trade_action()
 
-    async def react(self, packet: dict):
-        data = await super().react(packet)
-        if "stream" in data and data["stream"] == "linkusdt@bookTicker":
-            self.on_book_ticker(data["data"])
+    async def on_stream_content(self, stream_content: StreamContent):
+        if stream_content.stream == "linkusdt@bookTicker":
+            self.on_book_ticker(stream_content.data)
 
 
 async def main():

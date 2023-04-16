@@ -26,6 +26,11 @@ class Client:
         self.background_task = set()
 
     async def login(self):
+        """
+        Try log in to the server.
+
+        If any exception, login failed.
+        """
         logger.info(f"client:{self.uid} logging in")
         auth_obj = self.auth_func(self.uid)
         content = json.dumps(auth_obj)
@@ -39,19 +44,19 @@ class Client:
             # and as it's due to auth fail, there is no need to re-connect.
             raise ConnectionClosedOK
 
-    async def set_up(self):
-        """
-        This method will be called after logged in.
-        """
-        pass
-
     async def send(self, dest: list[str], content: str):
         """
         Helper method to make sure format checked
         """
         await self.websocket.send(Packet.to_server(dest, content))
 
-    async def react(self, packet: dict):
+    async def set_up(self):
+        """
+        This method will be called after logged in.
+        """
+        pass
+
+    async def react(self, packet: Packet):
         """
         All legal packet will go through here.
         """
@@ -63,7 +68,7 @@ class Client:
             try:
                 packet = Packet.from_server_message(message)
             except Exception as e:
-                logger.warning(f"client:{self.uid} loading failed: {str(e)}")
+                logger.warning(f"client:{self.uid} loading packet failed: {str(e)}")
                 continue
             await self.react(packet)
 
@@ -82,20 +87,22 @@ class Client:
     async def __call__(self):
         async for websocket in ws_client.connect(self.uri):
             try:
-                self.websocket = websocket
-                await self.login()
-                await self.set_up()
-                await self.handler()
+                try:
+                    self.websocket = websocket
+                    await self.login()
+                    await self.set_up()
+                    await self.handler()
+                finally:
+                    self.clean_up()
+                    await self.wait_clean_up()
+                    await self.websocket.close()
             except ConnectionClosedError as e:
                 logger.warning(f"client:{self.uid} connection error: {str(e)}")
                 continue
             except (asyncio.CancelledError, ConnectionClosedOK):
                 # When there is no need to re-connect, just exit.
-                logger.info(f"client:{self.uid} exiting")
-                self.clean_up()
-                await self.wait_clean_up()
-                break
-        logger.info(f"client:{self.uid} exit")
+                logger.info(f"client:{self.uid} exit")
+                return
 
 
 class EchoClient(Client):
