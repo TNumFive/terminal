@@ -10,61 +10,119 @@ logger = set_up_logger("binance")
 class BinanceRawHelper(ExchangeRawHelper):
     def __init__(
             self,
+            http_url="https://api.binance.com",
             ws_url="wss://stream.binance.com",
-            init_stream="btcusdt@kline_1m",
+            init_stream="btc_usdt@kline_1m",
             proxy=None,
-            websocket_send_interval=0.5,
+            websocket_send_interval=0.2,
             max_connect_retry_times=10
     ):
-        super().__init__(ws_url, proxy, websocket_send_interval, max_connect_retry_times)
+        super().__init__(http_url, ws_url, proxy, websocket_send_interval, max_connect_retry_times)
         self.init_stream = init_stream
-        self.ws_url = self.ws_url + "/stream?streams=" + self.init_stream
+        self.available_symbol_set: set = set()
+        stream_symbol, _ = ExchangeRawHelper.parse_stream(init_stream)
+        self.available_symbol_set.add("".join(stream_symbol).upper())
+        ws_url_suffix = f"/stream?streams={self.format_stream_name(init_stream)}"
+        self.ws_url = self.ws_url + ws_url_suffix
+
+    def format_stream_name(self, stream: str):
+        try:
+            stream_symbol, stream_type = ExchangeRawHelper.parse_stream(stream)
+            stream_symbol = ''.join(stream_symbol).lower()
+            # stream_symbol must in given pairs
+            if stream_symbol.upper() not in self.available_symbol_set:
+                raise ValueError("symbol not available")
+            # stream_type must correspond to exchange request
+            if "trade" in stream_type:
+                stream_type = "trade"
+            elif "kline" in stream_type:
+                stream_type = "kline_1m"
+            elif "bookTicker" in stream_type:
+                stream_type = "bookTicker"
+            elif "book" in stream_type:
+                stream_type = "depth20@100ms"
+            else:
+                raise ValueError("stream type error")
+        except Exception as e:
+            logger.warning(f"stream({stream}) format error: {str(e)}")
+            return None
+        stream_name = f"{stream_symbol}@{stream_type}"
+        self.stream_substitute[stream_name] = stream
+        return stream_name
+
+    async def get_exchange_info(self):
+        async with self.session.get(
+                f"{self.http_url}/api/v3/exchangeInfo",
+                proxy=self.proxy
+        ) as response:
+            exchange_info = await response.json()
+            symbol_list: list[dict] = exchange_info["symbols"]
+            for symbol in symbol_list:
+                self.available_symbol_set.add(symbol["symbol"])
 
     async def set_up(self):
-        if self.init_stream not in self.stream_dict:
-            self.stream_dict[self.init_stream] = []
+        if self.init_stream not in self.stream_set:
+            self.stream_set[self.init_stream] = set()
+        # request exchange info
+        await self.get_exchange_info()
         await super().set_up()
         # do the resubscribe
-        stream_list = list(self.stream_dict.keys())
+        stream_list = list(self.stream_set)
         stream_list.remove(self.init_stream)
         if not len(stream_list):
             return
+        stream_name_list = [
+            self.format_stream_name(stream) for stream in stream_list
+        ]
+        stream_name_list = [
+            x for x in stream_name_list if x is not None
+        ]
         request = {
             "method": "SUBSCRIBE",
-            "params": stream_list,
+            "params": stream_name_list,
             "id": self.get_request_id()
         }
         await self.websocket_send(json.dumps(request))
 
+    async def preprocess(self, data: dict):
+        stream = data.get("stream", "")
+        if stream in self.stream_substitute:
+            data["stream"] = self.stream_substitute[stream]
+        return data
+
     async def subscribe(self, uid: str, stream: str):
-        if stream not in self.stream_dict:
-            self.stream_dict[stream] = [uid]
+        if stream not in self.stream_set:
+            self.stream_set[stream] = {uid}
+            stream_name = self.format_stream_name(stream)
+            if not stream_name:
+                return
             request = {
                 "method": "SUBSCRIBE",
-                "params": [stream],
+                "params": [stream_name],
                 "id": self.get_request_id()
             }
             await self.websocket_send(json.dumps(request))
             return
-        dest = self.stream_dict[stream]
-        if uid not in dest:
-            dest.append(uid)
+        self.stream_set[stream].add(uid)
 
     async def unsubscribe(self, uid: str, stream: str):
-        if stream not in self.stream_dict:
+        if stream not in self.stream_set:
             return
-        dest = self.stream_dict[stream]
+        dest = self.stream_set[stream]
         if uid in dest:
             dest.remove(uid)
         if len(dest):
             return
+        stream_name = self.format_stream_name(stream)
+        if not stream_name:
+            return
         request = {
             "method": "UNSUBSCRIBE",
-            "params": [stream],
+            "params": [stream_name],
             "id": self.get_request_id()
         }
         await self.websocket_send(json.dumps(request))
-        self.stream_dict.pop(stream)
+        self.stream_set.pop(stream)
 
 
 class BinanceExchangeClient(ExchangeClient):
@@ -82,10 +140,10 @@ class BinanceExchangeClient(ExchangeClient):
         stream = data.get("stream", None)
         stream_data = data.get("data", {})
         if stream and isinstance(stream, str):
-            dest = self.stream_dict[stream]
+            dest = self.stream_set[stream]
             if len(dest):
                 content = StreamContent(stream, stream_data)
-                await self.send(dest, content.to_content_str())
+                await self.send(list(dest), content.to_content_str())
         else:
             logger.warning(f"receive unknown data: {data}")
 

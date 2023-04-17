@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import time
-from typing import Dict, Optional
+from typing import Dict, Optional, Set
 
 from websockets.exceptions import ConnectionClosed
 
@@ -47,7 +47,7 @@ class ExchangeClient(TradeClient):
     ):
         super().__init__(uid, uri, auth_func)
         self.helper = helper
-        self.stream_dict: Dict[str, list] = self.helper.stream_dict
+        self.stream_set: Dict[str, Set[str]] = self.helper.stream_set
         self.helper.portal = lambda data: self.helper_portal(data)
         self.helper_task: Optional[asyncio.Task] = None
         self.packet_buffer = []
@@ -165,7 +165,13 @@ class StrategyClient(TradeClient):
         self.request_dict[request_id] = asyncio.Future()
         return request_id
 
-    async def on_stream_content(self, stream_content: StreamContent):
+    async def on_response_content(self, content: ResponseContent):
+        request_id = content.request_id
+        result = content.result
+        if content.request_id in self.request_dict:
+            self.request_dict[request_id].set_result(result)
+
+    async def on_stream_content(self, content: StreamContent):
         raise NotImplementedError
 
     async def react(self, packet: Packet):
@@ -175,9 +181,6 @@ class StrategyClient(TradeClient):
             logger.warning(f"loading content failed: {str(e)}")
             return
         if isinstance(trade_content, ResponseContent):
-            request_id = trade_content.request_id
-            result = trade_content.result
-            if trade_content.request_id in self.request_dict:
-                self.request_dict[request_id].set_result(result)
+            await self.on_response_content(trade_content)
         elif isinstance(trade_content, StreamContent):
             await self.on_stream_content(trade_content)

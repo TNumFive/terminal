@@ -21,14 +21,7 @@ class TestStrategy(StrategyClient):
 
     async def set_up(self):
         await super().set_up()
-        await asyncio.sleep(1)
-        await self.subscribe("binance", "enjusdt@bookTicker")
-        await self.subscribe("binance", "eosusdt@bookTicker")
-        await self.subscribe("binance", "linkusdt@bookTicker")
-        await self.subscribe("binance", "maticusdt@bookTicker")
-        await self.subscribe("binance", "trxusdt@bookTicker")
-        await self.subscribe("binance", "vetusdt@bookTicker")
-        await self.subscribe("binance", "xlmusdt@bookTicker")
+        await self.subscribe("binance", "link_usdt@bookTicker")
 
     def trade_action(self):
         if len(self.book_ticker_list) < 2:
@@ -63,7 +56,7 @@ class TestStrategy(StrategyClient):
             self.trade_action()
 
     async def on_stream_content(self, stream_content: StreamContent):
-        if stream_content.stream == "linkusdt@bookTicker":
+        if stream_content.stream == "link_usdt@bookTicker":
             self.on_book_ticker(stream_content.data)
 
 
