@@ -129,7 +129,10 @@ class ExchangeRawHelper(ExchangeHelper):
         self.is_initialized = False
 
     async def wait_clean_up(self):
-        await self.websocket.close()
+        if not self.websocket:
+            return
+        if not self.websocket.closed:
+            await self.websocket.close()
 
     async def __call__(self):
         self.session = aiohttp.ClientSession()
@@ -142,9 +145,7 @@ class ExchangeRawHelper(ExchangeHelper):
                 finally:
                     self.clean_up()
                     await self.wait_clean_up()
-                    await self.websocket.close()
             except asyncio.CancelledError:
-                logger.info("websocket exit")
                 break
             except Exception as e:
                 logger.warning(f"connection closed: {e}")
@@ -152,3 +153,4 @@ class ExchangeRawHelper(ExchangeHelper):
                 if not reconnect_control:
                     break
         await self.session.close()
+        logger.info("websocket exit")

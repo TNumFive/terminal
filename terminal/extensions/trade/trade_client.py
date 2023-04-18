@@ -48,7 +48,7 @@ class ExchangeClient(TradeClient):
         super().__init__(uid, uri, auth_func)
         self.helper = helper
         self.stream_set: Dict[str, Set[str]] = self.helper.stream_set
-        self.helper.portal = lambda data: self.helper_portal(data)
+        self.helper.portal = lambda data: self.portal(data)
         self.helper_task: Optional[asyncio.Task] = None
         self.packet_buffer = []
 
@@ -63,11 +63,11 @@ class ExchangeClient(TradeClient):
             # Eat the exception and buffer the data.
             self.packet_buffer.append((dest, content))
 
-    async def handle_helper(self, data: dict):
+    async def handle_data(self, data: dict):
         raise NotImplementedError
 
-    def helper_portal(self, data):
-        task = asyncio.create_task(self.handle_helper(data))
+    def portal(self, data):
+        task = asyncio.create_task(self.handle_data(data))
         self.background_task.add(task)
         task.add_done_callback(self.background_task.discard)
 
@@ -120,7 +120,7 @@ class ExchangeClient(TradeClient):
 
     def clean_up(self):
         if self.helper_task and not self.helper_task.done():
-            logger.info("try stopping helper")
+            logger.info("stopping helper")
             self.helper_task.cancel()
 
     async def wait_clean_up(self):

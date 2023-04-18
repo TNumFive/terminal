@@ -20,17 +20,13 @@ class BinanceRawHelper(ExchangeRawHelper):
         super().__init__(http_url, ws_url, proxy, websocket_send_interval, max_connect_retry_times)
         self.init_stream = init_stream
         self.available_symbol_set: set = set()
-        stream_symbol, _ = ExchangeRawHelper.parse_stream(init_stream)
-        self.available_symbol_set.add("".join(stream_symbol).upper())
-        ws_url_suffix = f"/stream?streams={self.format_stream_name(init_stream)}"
-        self.ws_url = self.ws_url + ws_url_suffix
 
     def format_stream_name(self, stream: str):
         try:
             stream_symbol, stream_type = ExchangeRawHelper.parse_stream(stream)
             stream_symbol = ''.join(stream_symbol).lower()
             # stream_symbol must in given pairs
-            if stream_symbol.upper() not in self.available_symbol_set:
+            if stream_symbol not in self.available_symbol_set:
                 raise ValueError("symbol not available")
             # stream_type must correspond to exchange request
             if "trade" in stream_type:
@@ -58,13 +54,22 @@ class BinanceRawHelper(ExchangeRawHelper):
             exchange_info = await response.json()
             symbol_list: list[dict] = exchange_info["symbols"]
             for symbol in symbol_list:
-                self.available_symbol_set.add(symbol["symbol"])
+                symbol = str(symbol["symbol"]).lower()
+                self.available_symbol_set.add(symbol)
+
+    async def connect(self):
+        # request exchange info
+        await self.get_exchange_info()
+        ws_url_suffix = "/stream?streams="
+        if ws_url_suffix not in self.ws_url:
+            self.ws_url = self.ws_url + ws_url_suffix
+            stream_name = self.format_stream_name(self.init_stream)
+            self.ws_url += stream_name
+        await super().connect()
 
     async def set_up(self):
         if self.init_stream not in self.stream_set:
             self.stream_set[self.init_stream] = set()
-        # request exchange info
-        await self.get_exchange_info()
         await super().set_up()
         # do the resubscribe
         stream_list = list(self.stream_set)
@@ -136,7 +141,7 @@ class BinanceExchangeClient(ExchangeClient):
     ):
         super().__init__(uid, helper, uri, auth_func)
 
-    async def handle_helper(self, data: dict):
+    async def handle_data(self, data: dict):
         stream = data.get("stream", None)
         stream_data = data.get("data", {})
         if stream and isinstance(stream, str):
