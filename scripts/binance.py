@@ -65,29 +65,32 @@ class BinanceRawHelper(ExchangeRawHelper):
             self.ws_url = self.ws_url + ws_url_suffix
             stream_name = self.format_stream_name(self.init_stream)
             self.ws_url += stream_name
-        await super().connect()
-
-    async def set_up(self):
         if self.init_stream not in self.stream_set:
             self.stream_set[self.init_stream] = set()
-        await super().set_up()
+        await super().connect()
+
+    async def resubscribe(self):
         # do the resubscribe
-        stream_list = list(self.stream_set)
-        stream_list.remove(self.init_stream)
-        if not len(stream_list):
+        stream_name_list = []
+        for stream in self.stream_set:
+            if stream == self.init_stream:
+                continue
+            stream_name = self.format_stream_name(stream)
+            if not stream_name:
+                continue
+            stream_name_list.append(stream_name)
+        if not len(stream_name_list):
             return
-        stream_name_list = [
-            self.format_stream_name(stream) for stream in stream_list
-        ]
-        stream_name_list = [
-            x for x in stream_name_list if x is not None
-        ]
         request = {
             "method": "SUBSCRIBE",
             "params": stream_name_list,
             "id": self.get_request_id()
         }
         await self.websocket_send(json.dumps(request))
+
+    async def set_up(self):
+        await self.resubscribe()
+        await super().set_up()
 
     async def preprocess(self, data: dict):
         stream = data.get("stream", "")
