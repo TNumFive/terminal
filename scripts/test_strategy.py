@@ -21,7 +21,10 @@ class TestStrategy(StrategyClient):
 
     async def set_up(self):
         await super().set_up()
+        await self.subscribe("binance", "link_usdt@trade")
         await self.subscribe("binance", "link_usdt@bookTicker")
+        await self.subscribe("binance", "link_usdt@book")
+        await self.subscribe("binance", "link_usdt@kline")
 
     def trade_action(self):
         if len(self.book_ticker_list) < 2:
@@ -42,8 +45,8 @@ class TestStrategy(StrategyClient):
     def on_book_ticker(self, data: dict):
         self.book_ticker_list.append({
             "timestamp": time.time(),
+            "ask": float(data["a"]),
             "bid": float(data["b"]),
-            "ask": float(data["b"]),
         })
         while True:
             timespan = self.book_ticker_list[-1]["timestamp"]

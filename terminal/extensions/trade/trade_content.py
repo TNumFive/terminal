@@ -1,5 +1,7 @@
 import json
 import logging
+from dataclasses import dataclass, field
+from typing import List
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +18,7 @@ class TradeContent:
         self.content = content
 
     @staticmethod
-    def check_content(content: str):
+    def from_content(content: str):
         try:
             trade_content = json.loads(content)
         except json.JSONDecodeError:
@@ -58,12 +60,7 @@ class RequestContent(TradeContent):
         return RequestContent(request_id, method, params)
 
     def to_content_str(self):
-        content = {
-            "kl": self.klass,
-            "id": self.request_id,
-            "mt": self.method,
-            "pr": self.params
-        }
+        content = {"kl": self.klass, "id": self.request_id, "mt": self.method, "pr": self.params}
         return json.dumps(content)
 
 
@@ -87,12 +84,38 @@ class ResponseContent(TradeContent):
         return ResponseContent(request_id, result)
 
     def to_content_str(self):
-        content = {
-            "kl": self.klass,
-            "id": self.request_id,
-            "rs": self.result
-        }
+        content = {"kl": self.klass, "id": self.request_id, "rs": self.result}
         return json.dumps(content)
+
+
+@dataclass
+class TradeData:
+    trade_time: int
+    price: float
+    quantity: float
+
+
+@dataclass
+class BookLevel:
+    price: float
+    quantity: float
+
+
+@dataclass
+class BookData:
+    ask_level_list: List[BookLevel] = field(default_factory=list)
+    bid_level_list: List[BookLevel] = field(default_factory=list)
+
+
+@dataclass
+class KlineData:
+    start_time: int
+    end_time: int
+    open: float
+    close: float
+    high: float
+    low: float
+    volume: float
 
 
 class StreamContent(TradeContent):
@@ -117,9 +140,36 @@ class StreamContent(TradeContent):
         return StreamContent(stream, data)
 
     def to_content_str(self):
-        content = {
-            "kl": self.klass,
-            "st": self.stream,
-            "dt": self.data
-        }
+        content = {"kl": self.klass, "st": self.stream, "dt": self.data}
         return json.dumps(content)
+
+    def embed_trade_data(self, trade_time: int, price: float, quantity: float):
+        self.data = {"raw": self.data, "t": trade_time, "p": price, "q": quantity}
+
+    def extract_trade_data(self):
+        return TradeData(self.data["t"], self.data["p"], self.data["q"])
+
+    def embed_book_data(self, ask_level_list: List[BookLevel], bid_level_list: List[BookLevel]):
+        self.data = {"raw": self.data, "b": [], "a": []}
+        for level in ask_level_list:
+            self.data["a"].append({"p": level.price, "q": level.quantity})
+        for level in bid_level_list:
+            self.data["b"].append({"p": level.price, "q": level.quantity})
+
+    def extract_book_data(self):
+        ask_level_list: List[BookLevel] = []
+        for level in self.data["a"]:
+            ask_level_list.append(BookLevel(level["p"], level["q"]))
+        bid_level_list: List[BookLevel] = []
+        for level in self.data["b"]:
+            bid_level_list.append(BookLevel(level["p"], level["q"]))
+        return BookData(ask_level_list, bid_level_list)
+
+    def embed_kline_data(self, start_time: int, end_time: int, open_price: float, close_price: float, high_price: float,
+                         low_price: float, volume: float):
+        self.data = {"raw": self.data, "s": start_time, "e": end_time, "o": open_price, "c": close_price,
+                     "h": high_price, "l": low_price, "v": volume, }
+
+    def extract_kline_data(self):
+        return KlineData(self.data["s"], self.data["e"], self.data["o"], self.data["c"], self.data["h"], self.data["l"],
+                         self.data["v"], )

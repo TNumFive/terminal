@@ -29,7 +29,7 @@ class Client:
         """
         Try log in to the server.
 
-        If any exception, login failed.
+        If any exception, login failed and exit.
         """
         logger.info(f"client:{self.uid} logging in")
         auth_obj = self.auth_func(self.uid)

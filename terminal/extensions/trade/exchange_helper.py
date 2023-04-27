@@ -7,6 +7,8 @@ from typing import Optional, Dict, Set
 import aiohttp
 from aiohttp import ClientWebSocketResponse
 
+from terminal.extensions.trade.trade_content import TradeContent
+
 logger = logging.getLogger(__name__)
 
 
@@ -15,7 +17,7 @@ class ExchangeHelper:
         self.is_initialized = False
         self.stream_set: Dict[str, Set[str]] = {}
         self.stream_substitute: Dict[str, str] = {}
-        self.portal = lambda data: NotImplementedError
+        self.portal = lambda content: NotImplementedError
         self.background_task = set()
 
     @staticmethod
@@ -34,7 +36,7 @@ class ExchangeHelper:
 
         <base>_<quote>@book: return symbol's book
 
-        <base>_<quote>@kline: return symbol's kline of 1 minute.
+        <base>_<quote>@kline: return symbol's 1 minute kline
 
         user@?: return user account related like transaction detail.
         """
@@ -64,7 +66,7 @@ class ExchangeRawHelper(ExchangeHelper):
         self.message_buffer: list[str] = []
         self.session: Optional[aiohttp.ClientSession] = None
         self.websocket: Optional[ClientWebSocketResponse] = None
-        self.connect_retry_times = 10
+        self.connect_retry_times = 0
         self.websocket_send_time = time.time()
 
     def format_stream_name(self, stream: str):
@@ -110,8 +112,8 @@ class ExchangeRawHelper(ExchangeHelper):
         for message in buffer:
             await self.websocket_send(message)
 
-    async def preprocess(self, data: dict):
-        return data
+    async def preprocess(self, data: dict) -> Optional[TradeContent]:
+        raise NotImplementedError
 
     async def handler(self):
         async for message in self.websocket:
@@ -121,9 +123,9 @@ class ExchangeRawHelper(ExchangeHelper):
             except Exception as e:
                 logger.warning(f"loading message failed: {str(e)}")
                 continue
-            data = await self.preprocess(data)
-            if len(data):
-                self.portal(data)
+            content = await self.preprocess(data)
+            if content:
+                self.portal(content)
 
     def clean_up(self):
         self.is_initialized = False
@@ -148,9 +150,11 @@ class ExchangeRawHelper(ExchangeHelper):
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.warning(f"connection closed: {e}")
-                reconnect_control = await self.websocket_reconnect_control()
-                if not reconnect_control:
+                logger.warning(f"connection closed: {e}", exc_info=True)
+            try:
+                if not await self.websocket_reconnect_control():
                     break
+            except asyncio.CancelledError:
+                break
         await self.session.close()
         logger.info("websocket exit")

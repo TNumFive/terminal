@@ -16,7 +16,10 @@ class TradeClient(Client):
 
     @staticmethod
     def load_content(content: str):
-        trade_content = TradeContent.check_content(content)
+        """
+        Turn packet's content to trade content.
+        """
+        trade_content = TradeContent.from_content(content)
         if trade_content.klass == "request":
             return RequestContent.from_content(trade_content.content)
         elif trade_content.klass == "response":
@@ -27,12 +30,21 @@ class TradeClient(Client):
 
     @staticmethod
     def get_request_id():
+        """
+        Request id between trade clients to indicate unique.
+        """
         return int(time.time() * 1000)
 
     async def subscribe(self, uid: str, stream: str):
+        """
+        Subscribe data stream.
+        """
         raise NotImplementedError
 
     async def unsubscribe(self, uid: str, stream: str):
+        """
+        Unsubscribe data stream.
+        """
         raise NotImplementedError
 
 
@@ -46,9 +58,10 @@ class ExchangeClient(TradeClient):
             auth_func=lambda uid: {"uid": uid}
     ):
         super().__init__(uid, uri, auth_func)
+        # External part that utilize exchange.
         self.helper = helper
         self.stream_set: Dict[str, Set[str]] = self.helper.stream_set
-        self.helper.portal = lambda data: self.portal(data)
+        self.helper.portal = lambda content: self.portal(content)
         self.helper_task: Optional[asyncio.Task] = None
         self.packet_buffer = []
 
@@ -63,11 +76,14 @@ class ExchangeClient(TradeClient):
             # Eat the exception and buffer the data.
             self.packet_buffer.append((dest, content))
 
-    async def handle_data(self, data: dict):
+    async def handle_content(self, content: TradeContent):
+        """
+        Helper will turn raw exchange data into content and be handled here.
+        """
         raise NotImplementedError
 
-    def portal(self, data):
-        task = asyncio.create_task(self.handle_data(data))
+    def portal(self, content: TradeContent):
+        task = asyncio.create_task(self.handle_content(content))
         self.background_task.add(task)
         task.add_done_callback(self.background_task.discard)
 
@@ -102,6 +118,7 @@ class ExchangeClient(TradeClient):
         except Exception as e:
             logger.warning(f"loading content failed: {str(e)}")
             return
+        # Exchange only response to Request.
         if not isinstance(trade_content, RequestContent):
             return
         request_id = trade_content.request_id
@@ -112,10 +129,11 @@ class ExchangeClient(TradeClient):
             await self.check_initialized(packet.source, request_id)
         if not self.is_initialized:
             return
+        # Method below only works when helper is initialized.
         params = trade_content.params
-        if method == "subscribe":
+        if method == "subscribe" and len(params) == 1 and isinstance(params[0], str):
             await self.subscribe(packet.source, params[0])
-        elif method == "unsubscribe":
+        elif method == "unsubscribe" and len(params) == 1 and isinstance(params[0], str):
             await self.unsubscribe(packet.source, params[0])
 
     def clean_up(self):
@@ -155,14 +173,12 @@ class StrategyClient(TradeClient):
         request_id = self.get_request_id()
         request_content = RequestContent(request_id, "subscribe", [stream])
         await self.send([uid], request_content.to_content_str())
-        self.request_dict[request_id] = asyncio.Future()
         return request_id
 
     async def unsubscribe(self, uid: str, stream: str):
         request_id = self.get_request_id()
         request_content = RequestContent(request_id, "unsubscribe", [stream])
         await self.send([uid], request_content.to_content_str())
-        self.request_dict[request_id] = asyncio.Future()
         return request_id
 
     async def on_response_content(self, content: ResponseContent):

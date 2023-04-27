@@ -1,8 +1,11 @@
 import asyncio
 import json
 import signal
+import time
+from typing import Optional, List
 
 from terminal.extensions import ExchangeClient, set_up_logger, ExchangeRawHelper, StreamContent
+from terminal.extensions.trade.trade_content import TradeContent, BookLevel
 
 logger = set_up_logger("binance")
 
@@ -20,6 +23,10 @@ class BinanceRawHelper(ExchangeRawHelper):
         super().__init__(http_url, ws_url, proxy, websocket_send_interval, max_connect_retry_times)
         self.init_stream = init_stream
         self.available_symbol_set: set = set()
+
+    @staticmethod
+    def get_request_id():
+        return int(time.time() * 1e6)
 
     def format_stream_name(self, stream: str):
         try:
@@ -52,6 +59,8 @@ class BinanceRawHelper(ExchangeRawHelper):
                 proxy=self.proxy
         ) as response:
             exchange_info = await response.json()
+            if "code" in exchange_info and "msg" in exchange_info:
+                assert False, str(exchange_info)
             symbol_list: list[dict] = exchange_info["symbols"]
             for symbol in symbol_list:
                 symbol = str(symbol["symbol"]).lower()
@@ -92,26 +101,49 @@ class BinanceRawHelper(ExchangeRawHelper):
         await self.resubscribe()
         await super().set_up()
 
-    async def preprocess(self, data: dict):
-        stream = data.get("stream", "")
-        if stream in self.stream_substitute:
-            data["stream"] = self.stream_substitute[stream]
-        return data
+    async def preprocess(self, data: dict) -> Optional[TradeContent]:
+        if "stream" not in data:
+            logger.debug(f"not stream: {data}")
+            return None
+        if data["stream"] not in self.stream_substitute:
+            logger.debug(f"unknown stream: {data}")
+            return None
+        stream = self.stream_substitute[data["stream"]]
+        if not len(self.stream_set[stream]):
+            return None
+        data = data.pop("data")
+        stream_symbol, stream_type = ExchangeRawHelper.parse_stream(stream)
+        content = StreamContent(stream, data)
+        if stream_type[0] == "trade":
+            content.embed_trade_data(data.pop("T"), float(data.pop("p")), float(data.pop("q")))
+        elif stream_type[0] == "book":
+            ask_level_list: List[BookLevel] = []
+            for ask in data.pop("asks"):
+                ask_level_list.append(BookLevel(float(ask[0]), float(ask[1])))
+            bid_level_list: List[BookLevel] = []
+            for bid in data.pop("bids"):
+                bid_level_list.append(BookLevel(float(bid[0]), float(bid[1])))
+            content.embed_book_data(ask_level_list, bid_level_list)
+        elif stream_type[0] == "kline":
+            kline: dict = data.pop("k")
+            content.embed_kline_data(kline.pop("t"), kline.pop("T"), float(kline.pop("o")), float(kline.pop("c")),
+                                     float(kline.pop("h")), float(kline.pop("l")), float(kline.pop("v")))
+        return content
 
     async def subscribe(self, uid: str, stream: str):
+        stream_name = self.format_stream_name(stream)
+        if not stream_name:
+            return
         if stream not in self.stream_set:
             self.stream_set[stream] = {uid}
-            stream_name = self.format_stream_name(stream)
-            if not stream_name:
-                return
             request = {
                 "method": "SUBSCRIBE",
                 "params": [stream_name],
                 "id": self.get_request_id()
             }
             await self.websocket_send(json.dumps(request))
-            return
-        self.stream_set[stream].add(uid)
+        else:
+            self.stream_set[stream].add(uid)
 
     async def unsubscribe(self, uid: str, stream: str):
         if stream not in self.stream_set:
@@ -144,16 +176,10 @@ class BinanceExchangeClient(ExchangeClient):
     ):
         super().__init__(uid, helper, uri, auth_func)
 
-    async def handle_data(self, data: dict):
-        stream = data.get("stream", None)
-        stream_data = data.get("data", {})
-        if stream and isinstance(stream, str):
-            dest = self.stream_set[stream]
-            if len(dest):
-                content = StreamContent(stream, stream_data)
-                await self.send(list(dest), content.to_content_str())
-        else:
-            logger.warning(f"receive unknown data: {data}")
+    async def handle_content(self, content: TradeContent):
+        if isinstance(content, StreamContent):
+            dest = self.stream_set[content.stream]
+            await self.send(list(dest), content.to_content_str())
 
 
 async def main():
