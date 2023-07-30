@@ -160,5 +160,4 @@ cython_debug/
 .idea/
 
 # Custom git ignore
-log/
-record/
+test_*.py
