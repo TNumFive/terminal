@@ -47,12 +47,12 @@ class Server:
         try:
             # first check the format
             message = await asyncio.wait_for(websocket.recv(), self.timeout)
-            packet = Packet.pack(message)
+            packet = Packet.loads(message)
             assert len(packet.source), "invalid user_id"
             assert not len(packet.destination), "first packet must send to server"
             assert packet.source not in self.client_dict, "user already logged in"
         except (asyncio.TimeoutError, AssertionError) as e:
-            logger.debug(f"client from {websocket.remote_address} log in failed: {e}")
+            logger.debug(f"Client from {websocket.remote_address} log in failed: {e}")
             return False
         try:
             # second try to verify by pub_key
@@ -62,7 +62,7 @@ class Server:
             config = json.loads(config_str)
             assert config["timestamp"] > last_login["timestamp"], "invalid timestamp"
         except (json.JSONDecodeError, AssertionError) as e:
-            logger.debug(f"client from {websocket.remote_address} verify failed: {e}")
+            logger.debug(f"Client from {websocket.remote_address} verify failed: {e}")
             return False
         try:
             # update timestamp and respond secret_key
@@ -76,11 +76,11 @@ class Server:
                 [packet.source],
                 encrypt(box, secret_key),
             )
-            await websocket.send(response.to_string())
+            await websocket.send(response.dumps())
         except ConnectionClosed as e:
-            logger.debug(f"respond client:{packet.source} failed : {str(e)}")
+            logger.debug(f"Respond client:{packet.source} failed : {str(e)}")
             return False
-        logger.debug(f"new client:{packet.source} from {websocket.remote_address}")
+        logger.debug(f"New client:{packet.source} from {websocket.remote_address}")
         self.connection_dict[websocket] = packet
         self.client_dict[packet.source] = websocket
         self.config_dict[packet.source] = config
@@ -94,7 +94,7 @@ class Server:
         source = packet.source if packet else None
         self.client_dict.pop(source, None)
         self.config_dict.pop(source, None)
-        logger.debug(f"client:{packet.source} from {websocket.remote_address} log out")
+        logger.debug(f"Client:{packet.source} from {websocket.remote_address} log out")
 
     async def record(self, packet: Packet):
         async def insert_task():
@@ -114,10 +114,10 @@ class Server:
                 websocket = self.client_dict[user_id]
                 packet.destination = [user_id]
                 packet.content = encrypt(self.config_dict[user_id]["box"], content)
-                await websocket.send(packet.to_string())
+                await websocket.send(packet.dumps())
             except ConnectionClosed as e:
                 # other connection shall not affect this one
-                logger.info(f"route packet to {user_id} failed: {e}")
+                logger.info(f"Route packet to {user_id} failed: {e}")
         packet.destination = destination
         packet.content = content
 
@@ -132,7 +132,7 @@ class Server:
         config = self.config_dict[user_id]
         try:
             async for message in websocket:
-                packet = Packet.pack(message)
+                packet = Packet.loads(message)
                 packet.source = user_id
                 packet.route_time = Packet.get_timestamp()
                 packet.content = decrypt(
@@ -144,7 +144,7 @@ class Server:
                 await self.route(packet)
         except ConnectionClosed as e:
             logger.debug(
-                f"connection of {user_id} from {websocket.remote_address} closed: {e}"
+                f"Connection of {user_id} from {websocket.remote_address} closed: {e}"
             )
         finally:
             await self.log_out(websocket)

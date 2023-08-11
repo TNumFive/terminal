@@ -41,8 +41,8 @@ class Client:
         content = encrypt(box, config_str)
         packet = Packet(Packet.get_timestamp(), 0, self.user_id, [], content)
         websocket = await connect(self.uri)
-        await websocket.send(packet.to_string())
-        response = Packet.pack(await websocket.recv())
+        await websocket.send(packet.dumps())
+        response = Packet.loads(await websocket.recv())
         secret_key = decrypt(box, response.content)
         self.secret_box = secret_box(secret_key)
         self.websocket = websocket
@@ -55,21 +55,28 @@ class Client:
             self.connect_task = asyncio.create_task(self.log_in())
         await self.connect_task
 
-    async def send(self, destination: list[str], message: str):
+    async def send_packet(self, packet: Packet):
+        packet.content = encrypt(self.secret_box, packet.content)
         await self.connect()
+        await self.websocket.send(packet.dumps())
+
+    async def send(self, destination: list[str], message: str):
         packet = Packet(
             Packet.get_timestamp(),
             0,
             self.user_id,
             destination,
-            encrypt(self.secret_box, message),
+            message,
         )
-        await self.websocket.send(packet.to_string())
+        await self.send_packet(packet)
 
     async def recv(self):
         await self.connect()
-        message = await self.websocket.recv()
-        packet = Packet.pack(message)
+        return await self.websocket.recv()
+
+    async def recv_packet(self):
+        message = await self.recv()
+        packet = Packet.loads(message)
         packet.content = decrypt(self.secret_box, packet.content)
         return packet
 

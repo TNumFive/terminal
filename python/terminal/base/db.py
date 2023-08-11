@@ -10,6 +10,29 @@ from .packet import Packet
 
 logger = logging.getLogger(__name__)
 
+CREATE_PACKET_TABLE = """CREATE TABLE IF NOT EXISTS `packet`
+(
+    `id`          VARCHAR(32) PRIMARY KEY,
+    `sent_time`   BIGINT      NOT NULL,
+    `route_time`  BIGINT      NOT NULL,
+    `source`      VARCHAR(32) NOT NULL,
+    `destination` TEXT        NOT NULL,
+    `content`     TEXT        NOT NULL
+)"""
+
+CREATE_ROUTE_TABLE = """CREATE TABLE IF NOT EXISTS `route`
+(
+    `packet_id` VARCHAR(32) PRIMARY KEY,
+    `user_id`   VARCHAR(32) NOT NULL
+)"""
+
+CREATE_USER_TABLE = """CREATE TABLE IF NOT EXISTS `user`
+(
+    `id`        VARCHAR(32) PRIMARY KEY,
+    `pub_key`   VARCHAR(64) NOT NULL,
+    `timestamp` BIGINT      NOT NULL
+)"""
+
 
 class DB:
     def __init__(
@@ -23,6 +46,21 @@ class DB:
         self.connection: Optional[aiomysql.Connection] = None
         self.connect_task: Optional[asyncio.Task] = None
 
+    async def create_table(self, connection: aiomysql.Connection):
+        async with connection.cursor(DictCursor) as cursor:
+            cursor: DictCursor = cursor
+            await cursor.execute(
+                "SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA = %s",
+                [self.database],
+            )
+            table_name_list = [row["TABLE_NAME"] for row in await cursor.fetchall()]
+            if "packet" not in table_name_list:
+                await cursor.execute(CREATE_PACKET_TABLE)
+            if "route" not in table_name_list:
+                await cursor.execute(CREATE_ROUTE_TABLE)
+            if "user" not in table_name_list:
+                await cursor.execute(CREATE_USER_TABLE)
+
     async def connect(self):
         async def task():
             connection = await aiomysql.connect(
@@ -32,7 +70,7 @@ class DB:
                 db=self.database,
                 port=self.port,
             )
-            await self.create_table()
+            await self.create_table(connection)
             self.connection = connection
             self.connect_task = None
 
@@ -48,42 +86,17 @@ class DB:
         self.connection.close()
         await self.connection.ensure_closed()
 
-    async def create_table(self):
-        if not self.connection:
-            return
-        async with self.connection.cursor() as cursor:
-            cursor: aiomysql.Cursor = cursor
-            sql = """
-            CREATE TABLE IF NOT EXISTS `packet`
-            (
-                `id`          VARCHAR(32) PRIMARY KEY,
-                `sent_time`   BIGINT      NOT NULL,
-                `route_time`  BIGINT      NOT NULL,
-                `source`      VARCHAR(32) NOT NULL,
-                `destination` TEXT        NOT NULL,
-                `content`     TEXT        NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS `user`
-            (
-                `id`        VARCHAR(32) PRIMARY KEY,
-                `pub_key`   VARCHAR(64) NOT NULL,
-                `timestamp` BIGINT      NOT NULL
-            );
-            """
-            await cursor.execute(sql)
-
     async def insert_packet_list(self, packet_list: list[Packet]):
         if not len(packet_list):
             return
         await self.connect()
         async with self.connection.cursor() as cursor:
             cursor: aiomysql.Cursor = cursor
-            sql = (
-                "INSERT INTO `packet`(`id`,`sent_time`,`route_time`,`source`,`destination`,`content`)"
-                "VALUES(%s, %s, %s, %s, %s, %s)"
-            )
             await cursor.executemany(
-                sql,
+                (
+                    "INSERT INTO `packet`(`id`,`sent_time`,`route_time`,`source`,`destination`,`content`)"
+                    "VALUES(%s, %s, %s, %s, %s, %s)"
+                ),
                 [
                     (
                         packet.id,
@@ -94,6 +107,14 @@ class DB:
                         packet.content,
                     )
                     for packet in packet_list
+                ],
+            )
+            await cursor.executemany(
+                "INSERT INTO `route`(`packet_id`,`user_id`) VALUES(%s, %s)",
+                [
+                    [packet.id, user_id]
+                    for packet in packet_list
+                    for user_id in packet.destination
                 ],
             )
             await self.connection.commit()

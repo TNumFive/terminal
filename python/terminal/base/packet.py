@@ -12,7 +12,7 @@ class Packet:
         destination: list[str],
         content: str,
     ):
-        self.id = uuid.uuid1().hex
+        self.id = self.get_id()
         self.sent_time = sent_time
         self.route_time = route_time
         self.source = source
@@ -20,11 +20,17 @@ class Packet:
         self.content = content
 
     @staticmethod
+    def get_id():
+        # convert uuid_v1 to ordered
+        uuid_v1 = uuid.uuid1().hex
+        return uuid_v1[12:16] + uuid_v1[8:12] + uuid_v1[0:8] + uuid_v1[16:]
+
+    @staticmethod
     def get_timestamp():
         return int(time.time() * 1e3)
 
     @staticmethod
-    def pack(message: str):
+    def loads(message: str):
         obj = json.loads(message)
         assert isinstance(obj, dict), "type error"
         assert len(obj) == 6, "field num error"
@@ -52,7 +58,7 @@ class Packet:
         assert isinstance(content, str), "content type error"
         return Packet(sent_time, route_time, source, destination, content)
 
-    def to_string(self):
+    def dumps(self):
         obj = {
             "id": self.id,
             "st": self.sent_time,
